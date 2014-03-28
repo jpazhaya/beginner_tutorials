@@ -142,6 +142,7 @@ private:
 	Ptr<ArrayViewHandle> filt_2_scratch;
 	Ptr<ArrayViewHandle> pool_2_scratch;
 	Ptr<ArrayViewHandle> feat_scratch;
+    Ptr<ArrayViewHandle> host_output;
 
 	static unsigned int clp2(unsigned int x) {
 		x = x - 1;

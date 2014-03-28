@@ -36,8 +36,8 @@ public:
 		sensor_msgs::Image im;
 		cvi.toImageMsg(im);
 		image_pub_.publish(im);
-		cv_bridge::CvImagePtr cv_ptr;
-		cv_ptr = cv_bridge::toCvCopy(im, sensor_msgs::image_encodings::BGR8);
+		//cv_bridge::CvImagePtr cv_ptr;
+		//cv_ptr = cv_bridge::toCvCopy(im, sensor_msgs::image_encodings::BGR8);
 		//cv::imshow(OPENCV_WINDOW,cv_ptr->image);
 		//cv::waitKey(3);
 	}

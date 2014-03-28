@@ -19,8 +19,6 @@ LanePredictor::LanePredictor(int* argc, char* argv[],int stream_num){
 	divide_lcn = gpuArrayAllocRM(DataType::FLOAT, DDim(BATCH_SIZE,DIVIDE_OUTPUTZ,DIVIDE_OUTPUTX,DIVIDE_OUTPUTY),stream);
 	filt_LCN = gpuArrayAllocRM(DataType::FLOAT,DDim(IMG_DIMZ,1,1,IMG_DIMZ,MEAN_SIZE1,MEAN_SIZE2),stream);
 	init_filt_LCN();
-	synchronizeStream(stream);
-	std::cout<<"prepoc alloc"<<std::endl;
 
 	W_1 = gpuArrayAllocRM(DataType::FLOAT, DDim(MAPS_1,1,1,FILT1_DIMZ,FILT1_DIMX,FILT1_DIMY), stream);
 	Ptr<DistArrayHandle> W_1_load = loadDistArray(model+"_W_1",DDim(1,1,1,1,1,1),stream);
@@ -28,8 +26,6 @@ LanePredictor::LanePredictor(int* argc, char* argv[],int stream_num){
 	filt_1 = gpuArrayAllocRM(DataType::FLOAT, DDim(BATCH_SIZE,FILT1_OUTPUTZ,FILT1_OUTPUTX,FILT1_OUTPUTY), stream);
 	nonlin_1 = gpuArrayAllocRM(DataType::FLOAT, filt_1->dim(),stream);
 	pool_1 = gpuArrayAllocRM(DataType::FLOAT, DDim(BATCH_SIZE,SUBSAMP1_OUTPUTZ,SUBSAMP1_OUTPUTX,SUBSAMP1_OUTPUTY),stream);
-	synchronizeStream(stream);
-	std::cout<<"W_1 load"<<std::endl;
 
 	W_2 = gpuArrayAllocRM(DataType::FLOAT, DDim(MAPS_2,1,1,FILT2_DIMZ,FILT2_DIMX,FILT2_DIMY),stream);
 	Ptr<DistArrayHandle> W_2_load = loadDistArray(model+"_W_2",DDim(1,1,1,1,1,1),stream);
@@ -72,15 +68,17 @@ LanePredictor::LanePredictor(int* argc, char* argv[],int stream_num){
 	allocScratchArray(divide_lcn,filt_1,W_1,FILT1_STEPX,divide_lcn_in_scratch,filt_1_scratch,stream,W1_SPLITS);
 	allocScratchArray(pool_1,filt_2,W_2,FILT2_STEPX,pool_1_scratch,filt_2_scratch,stream,W2_SPLITS);
 	allocScratchArray(pool_2,feat,W_3,FILT3_STEPX,pool_2_scratch,feat_scratch,stream,W3_SPLITS);
+    
+    host_output = hostArrayAllocRM(DataType::FLOAT,DDim(1,NUM_CLASSIFIERS),stream);
 
 	synchronizeStream(stream);
-	std::cout<<"Alloc Done"<<std::endl;
 }
 LanePredictor::~LanePredictor(){
 	fastCppShutdown();
 }
 
 Ptr<ArrayViewHandle> LanePredictor::processImage(const Ptr<ArrayViewHandle>& img){
+    copy(img,data_buf,stream);
 	gpuFilterTimesLarge(filt_LCN,false,IMG_DIMZ,MEAN_STEP1,MEAN_STEP2,data_buf,mean_lcn,
 		data_buf_scratch,mean_lcn_scratch,stream,MEAN_LCN_SPLITS);
 	gpuMinus(data_buf->view(MEAN_POS,mean_lcn->dim()),mean_lcn,mean_lcn,stream);
@@ -111,8 +109,8 @@ Ptr<ArrayViewHandle> LanePredictor::processImage(const Ptr<ArrayViewHandle>& img
 
 	gpuGEMM('n','t',1.0f,feat_bn,W_final,0.0f,mult_linear,stream);
 	gpuPlus(mult_linear,B_final,mult_linear,stream);
-
 	Ptr<ArrayViewHandle> prob = reshape(mult_linear,DDim(BATCH_SIZE,NUM_CLASSES,NUM_CLASSIFIERS),stream);
+
 	gpuMax(prob,1,reduce_col,stream);
 	gpuMinus(prob,reduce_col,prob,stream);
 	gpuExp(prob,prob,stream);
@@ -138,9 +136,10 @@ Ptr<ArrayViewHandle> LanePredictor::processImage(const Ptr<ArrayViewHandle>& img
 	gpuSum(prob,1,labels,stream);
 	gpuDivide(labels,reduce_col,labels,stream); 
 
-	Ptr<ArrayViewHandle> label_output = reshape(labels,DDim(1,NUM_CLASSIFIERS,stream),stream);
-	synchronizeStream(stream);
-	return label_output;
+	Ptr<ArrayViewHandle> label_output = reshape(labels,DDim(1,NUM_CLASSIFIERS),stream);
+    copy(label_output,host_output,stream);
+
+	return host_output;
 }
 void LanePredictor::init_filt_LCN(){
 	Ptr<ArrayViewHandle> filt_vals = hostArrayAllocRM(DataType::FLOAT,DDim(MEAN_SIZE1,MEAN_SIZE2),stream);
@@ -216,7 +215,6 @@ void LanePredictor::gpuFilterTimesLarge(  const Ptr<ArrayViewHandle>& filters,
 			output_split = output->view(DDim(0,0,i*out_split_width,0),DDim(output->dim(0),output->dim(1),
 				output->dim(2)-i*out_split_width,output->dim(3)));
 			gpuCopy(outputScratch->view(DDim(i,0,0,0),output_split->dim()),output_split,stream);
-			std::cout<<i<<std::endl;
 			break;
 		}else{
 			output_split = output->view(DDim(0,0,i*out_split_width,0),DDim(output->dim(0),output->dim(1),

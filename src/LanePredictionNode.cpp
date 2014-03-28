@@ -6,10 +6,16 @@
 #include <cv_bridge/cv_bridge.h>
 #include <sensor_msgs/image_encodings.h>
 #include "LanePredictor.h"
+#include <vector>
+#include <queue>
 
 static const std::string OPENCV_WINDOW = "Image window";
 LanePredictor* predictor;
-std::vector<float> img;
+std::queue<std::vector<float> > mData;
+
+void push_data(const std::vector<float>& data){
+        mData.push(data);
+}
 
 void lanePredictorCb(const sensor_msgs::ImageConstPtr& msg){
 	cv_bridge::CvImagePtr cv_ptr;
@@ -24,18 +30,26 @@ void lanePredictorCb(const sensor_msgs::ImageConstPtr& msg){
 	}
 
 	cv::Mat frame = cv_ptr->image;
+    
 	int frameSize = frame.cols*frame.rows*frame.channels();
+    std::vector<float> img;
 	img.resize(frameSize);
 	std::copy(frame.data,frame.data+frameSize,img.data());
+    push_data(img);
+    
 	Ptr<ArrayViewHandle> arr = hostArrayAllocRM(DataType::FLOAT,DDim(3,640,480,1),0);
 	synchronizeStream(0);
+   
 	ASSERT(arr->memoryHandle()->ptr());
-	std::copy((float*)(&img),(float*)(&img)+frame.cols*frame.rows*frame.channels(), (float*)arr->memoryHandle()->ptr());
+	std::copy(mData.front().begin(),mData.front().end(), (float*)arr->memoryHandle()->ptr());
+    mData.pop();
+    
 	std::vector<int> perm(4,0);
 	perm[0] = 3;
 	perm[1] = 0;
 	perm[2] = 1;
 	perm[3] = 2;
+
 	Ptr<ArrayViewHandle> pred = predictor->processImage( permute(arr,perm) );
 	int num_classifier = pred->dim(1);
 	float pixel_pred[num_classifier];
@@ -48,6 +62,7 @@ void lanePredictorCb(const sensor_msgs::ImageConstPtr& msg){
 	cv::waitKey(3);
 }
 
+
 int main(int argc,char** argv){
 	//fastCppInit(&argc,&argv);
 	ros::init(argc,argv,"LanePredictorNode");
@@ -56,7 +71,7 @@ int main(int argc,char** argv){
 	predictor = new LanePredictor(&argc,argv,0);
 	//LanePredictor predictor(&argc,argv,0);
 	ros::Subscriber sub = nh_.subscribe("VideoProducer/output_video",1,lanePredictorCb);
-	ros::spinOnce();
+	ros::spin();
 	cv::destroyWindow(OPENCV_WINDOW);
 	//fastCppShutdown();
 	return 0;
